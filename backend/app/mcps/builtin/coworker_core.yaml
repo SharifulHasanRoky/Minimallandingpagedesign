@@ -1,0 +1,32 @@
+name: coworker-core
+description: |
+  Reference MCP exposing core Coworker OS internals (memory recall, audit log,
+  approval queue) as tools. This is the canonical example - copy it as a
+  starting point for new MCPs.
+transport: stdio
+command: ["python", "-m", "coworker_core_mcp"]
+status: builtin
+tools:
+  - name: memory.recall
+    description: Semantic recall over the user's long-term memory.
+    input_schema:
+      type: object
+      properties:
+        query: { type: string }
+        k:     { type: integer, default: 8 }
+      required: [query]
+  - name: memory.remember
+    description: Persist a fact into long-term memory (subject to approval).
+    input_schema:
+      type: object
+      properties:
+        kind: { type: string }
+        text: { type: string }
+        pin:  { type: boolean, default: false }
+      required: [kind, text]
+  - name: audit.recent
+    description: Last N audited actions for transparency.
+    input_schema:
+      type: object
+      properties:
+        limit: { type: integer, default: 50 }
