@@ -1,0 +1,27 @@
+# ── runtime data ───────────────────────────────────────────────────────
+backend/data/
+backend/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ── secrets ────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.master_key
+
+# ── frontend ───────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+.vite/
+*.log
+
+# ── editor ─────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
