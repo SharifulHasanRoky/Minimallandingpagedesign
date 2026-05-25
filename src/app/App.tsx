@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { ImageWithFallback } from './components/figma/ImageWithFallback';
-import { Calendar, CheckCircle2, Clock, Star, Users, ArrowRight, Shield, Zap, Target, Search } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Star, Users, ArrowRight, Shield, Zap, Target, Search, Wand2 } from 'lucide-react';
 import WebSearchTool from './components/WebSearchTool';
+import AIImageGenerator from './components/AIImageGenerator';
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<'landing' | 'search'>('landing');
+  const [currentPage, setCurrentPage] = useState<'landing' | 'search' | 'image-gen'>('landing');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -36,10 +37,35 @@ export default function App() {
     );
   }
 
+  // If on image generator page
+  if (currentPage === 'image-gen') {
+    return (
+      <div>
+        <div className="fixed bottom-6 right-6 z-50">
+          <button
+            onClick={() => setCurrentPage('landing')}
+            className="bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white px-4 py-3 rounded-full shadow-2xl hover:shadow-purple-500/30 hover:scale-105 transition-all flex items-center gap-2 font-medium"
+          >
+            <ArrowRight className="w-4 h-4 rotate-180" />
+            Back to Home
+          </button>
+        </div>
+        <AIImageGenerator />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* FLOATING SEARCH TOOL BUTTON */}
-      <div className="fixed bottom-6 right-6 z-50">
+      {/* FLOATING TOOL BUTTONS */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+        <button
+          onClick={() => setCurrentPage('image-gen')}
+          className="bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white px-5 py-3 rounded-full shadow-2xl hover:shadow-purple-500/30 hover:scale-105 transition-all flex items-center gap-2 font-semibold"
+        >
+          <Wand2 className="w-5 h-5" />
+          AI Image Generator
+        </button>
         <button
           onClick={() => setCurrentPage('search')}
           className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-5 py-3 rounded-full shadow-2xl hover:shadow-blue-500/30 hover:scale-105 transition-all flex items-center gap-2 font-semibold"
