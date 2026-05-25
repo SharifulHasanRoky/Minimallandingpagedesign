@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { ImageWithFallback } from './components/figma/ImageWithFallback';
-import { Calendar, CheckCircle2, Clock, Star, Users, ArrowRight, Shield, Zap, Target } from 'lucide-react';
+import { Calendar, CheckCircle2, Clock, Star, Users, ArrowRight, Shield, Zap, Target, Search } from 'lucide-react';
+import WebSearchTool from './components/WebSearchTool';
 
 export default function App() {
+  const [currentPage, setCurrentPage] = useState<'landing' | 'search'>('landing');
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -15,8 +17,38 @@ export default function App() {
     alert('Thank you! We\'ll contact you within 24 hours.');
   };
 
+  // If on search page, render the WebSearchTool
+  if (currentPage === 'search') {
+    return (
+      <div>
+        {/* Navigation back to landing */}
+        <div className="fixed bottom-6 right-6 z-50">
+          <button
+            onClick={() => setCurrentPage('landing')}
+            className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-3 rounded-full shadow-2xl hover:shadow-blue-500/30 hover:scale-105 transition-all flex items-center gap-2 font-medium"
+          >
+            <ArrowRight className="w-4 h-4 rotate-180" />
+            Back to Home
+          </button>
+        </div>
+        <WebSearchTool />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* FLOATING SEARCH TOOL BUTTON */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <button
+          onClick={() => setCurrentPage('search')}
+          className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-5 py-3 rounded-full shadow-2xl hover:shadow-blue-500/30 hover:scale-105 transition-all flex items-center gap-2 font-semibold"
+        >
+          <Search className="w-5 h-5" />
+          Web Search Tool
+        </button>
+      </div>
+
       {/* HERO SECTION */}
       <section className="relative bg-gradient-to-br from-blue-600 to-blue-800 text-white overflow-hidden">
         <div className="absolute inset-0 bg-black/10"></div>
