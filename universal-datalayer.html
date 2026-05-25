@@ -1,1413 +1,210 @@
 <script>
-/**
- * ============================================================
- * UNIVERSAL DATA LAYER - GA4 Schema Compliant
- * ============================================================
- * Version: 2.0.0
- * Works on: WordPress, Shopify, Laravel, Wix, Squarespace,
- *           Framer, Webflow, and ALL CMS/Custom sites
- * Deploy: Google Tag Manager > Custom HTML Tag > Trigger: All Pages
- * ============================================================
- */
-(function() {
-  'use strict';
-
-  // ===================== CONFIGURATION =====================
-  var CONFIG = {
-    cookieExpiry: 390,        // days (GA4 standard)
-    sessionTimeout: 30,       // minutes
-    cookiePrefix: '_udl_',
-    dataLayerName: 'dataLayer',
-    debugMode: false,
-    qualityScoreWeights: {
-      email: 25,
-      phone: 20,
-      name: 15,
-      address: 10,
-      userId: 15,
-      consent: 10,
-      engagement: 5
-    }
+(function(){
+  var DL = window.dataLayer = window.dataLayer || [];
+  var C = {
+    currency: (document.querySelector('meta[property="og:price:currency"]')||{}).content || 'USD',
+    vertical: 'retail',
+    domain: '.' + location.hostname.split('.').slice(-2).join('.')
   };
 
-
-  // ===================== COOKIE UTILITIES =====================
-  var CookieManager = {
-    set: function(name, value, days) {
-      var expires = '';
-      if (days) {
-        var date = new Date();
-        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-        expires = '; expires=' + date.toUTCString();
-      }
-      var cookieStr = CONFIG.cookiePrefix + name + '=' + encodeURIComponent(JSON.stringify(value));
-      cookieStr += expires + '; path=/; SameSite=Lax; Secure';
-      document.cookie = cookieStr;
-    },
-
-    get: function(name) {
-      var nameEQ = CONFIG.cookiePrefix + name + '=';
-      var ca = document.cookie.split(';');
-      for (var i = 0; i < ca.length; i++) {
-        var c = ca[i].trim();
-        if (c.indexOf(nameEQ) === 0) {
-          try {
-            return JSON.parse(decodeURIComponent(c.substring(nameEQ.length)));
-          } catch(e) {
-            return c.substring(nameEQ.length);
-          }
-        }
-      }
-      return null;
-    },
-
-    remove: function(name) {
-      document.cookie = CONFIG.cookiePrefix + name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-    },
-
-    exists: function(name) {
-      return this.get(name) !== null;
-    }
-  };
-
-
-  // ===================== ID GENERATION =====================
-  var IDGenerator = {
-    uuid: function() {
-      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = Math.random() * 16 | 0;
-        var v = c === 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-      });
-    },
-
-    clientId: function() {
-      var existing = CookieManager.get('client_id');
-      if (existing) return existing;
-      var id = this.uuid();
-      CookieManager.set('client_id', id, CONFIG.cookieExpiry);
-      return id;
-    },
-
-    sessionId: function() {
-      var session = CookieManager.get('session');
-      var now = Date.now();
-      if (session && (now - session.lastActivity) < (CONFIG.sessionTimeout * 60 * 1000)) {
-        session.lastActivity = now;
-        session.pageviews = (session.pageviews || 0) + 1;
-        CookieManager.set('session', session, CONFIG.cookieExpiry);
-        return session.id;
-      }
-      var newSession = {
-        id: now.toString(36) + Math.random().toString(36).substr(2, 9),
-        startTime: now,
-        lastActivity: now,
-        pageviews: 1,
-        number: (session ? (session.number || 1) + 1 : 1)
-      };
-      CookieManager.set('session', newSession, CONFIG.cookieExpiry);
-      return newSession.id;
-    }
-  };
-
-
-  // ===================== USER DATA COLLECTOR =====================
-  var UserDataCollector = {
-    data: {},
-
-    init: function() {
-      this.data = CookieManager.get('user_data') || {};
-      this.detectFromPage();
-      return this.data;
-    },
-
-    set: function(key, value) {
-      if (value && value !== '' && value !== 'undefined' && value !== 'null') {
-        this.data[key] = value;
-        CookieManager.set('user_data', this.data, CONFIG.cookieExpiry);
-      }
-    },
-
-    get: function(key) {
-      return this.data[key] || null;
-    },
-
-    getAll: function() {
-      return JSON.parse(JSON.stringify(this.data));
-    },
-
-    detectFromPage: function() {
-      // Detect from meta tags
-      var metaTags = {
-        'user-email': 'email',
-        'user-name': 'name',
-        'user-phone': 'phone',
-        'user-id': 'user_id',
-        'customer-id': 'user_id'
-      };
-      for (var meta in metaTags) {
-        var el = document.querySelector('meta[name="' + meta + '"]');
-        if (el && el.content) this.set(metaTags[meta], el.content);
-      }
-
-      // Detect from Shopify customer object
-      if (window.__st && window.__st.cid) {
-        this.set('user_id', window.__st.cid.toString());
-      }
-      if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.page) {
-        var shopMeta = window.ShopifyAnalytics.meta;
-        if (shopMeta.page.customerId) this.set('user_id', shopMeta.page.customerId.toString());
-      }
-
-      // Detect from WordPress/WooCommerce
-      if (window.wc_customer_params) {
-        this.set('email', window.wc_customer_params.email || '');
-        this.set('name', (window.wc_customer_params.first_name || '') + ' ' + (window.wc_customer_params.last_name || ''));
-      }
-
-      // Detect from any global user object
-      if (window._userInfo) {
-        for (var k in window._userInfo) {
-          this.set(k, window._userInfo[k]);
-        }
-      }
-    },
-
-    hashEmail: function(email) {
-      if (!email) return null;
-      return this.sha256(email.toLowerCase().trim());
-    },
-
-    hashPhone: function(phone) {
-      if (!phone) return null;
-      var cleaned = phone.replace(/[^0-9+]/g, '');
-      return this.sha256(cleaned);
-    },
-
-    sha256: function(str) {
-      // Simple hash for matching - use Web Crypto API if available
-      if (window.crypto && window.crypto.subtle) {
-        // Return a promise-based hash (for advanced matching)
-        return 'sha256_pending';
-      }
-      // Fallback: simple hash
-      var hash = 0;
-      for (var i = 0; i < str.length; i++) {
-        var char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash = hash & hash;
-      }
-      return 'h_' + Math.abs(hash).toString(36);
-    }
-  };
-
-
-  // ===================== EVENT MATCHING QUALITY SCORE =====================
-  var QualityScore = {
-    calculate: function() {
-      var score = 0;
-      var weights = CONFIG.qualityScoreWeights;
-      var userData = UserDataCollector.getAll();
-
-      if (userData.email) score += weights.email;
-      if (userData.phone) score += weights.phone;
-      if (userData.name || (userData.first_name && userData.last_name)) score += weights.name;
-      if (userData.address || (userData.city && userData.country)) score += weights.address;
-      if (userData.user_id) score += weights.userId;
-      if (this.hasConsent()) score += weights.consent;
-      if (this.getEngagementLevel() > 2) score += weights.engagement;
-
-      return Math.min(score, 100);
-    },
-
-    getGrade: function() {
-      var score = this.calculate();
-      if (score >= 80) return 'excellent';
-      if (score >= 60) return 'good';
-      if (score >= 40) return 'fair';
-      if (score >= 20) return 'poor';
-      return 'minimal';
-    },
-
-    hasConsent: function() {
-      // Check common consent signals
-      return !!(
-        CookieManager.get('consent') ||
-        document.cookie.indexOf('cookieconsent_status=allow') > -1 ||
-        document.cookie.indexOf('CookieConsent=true') > -1 ||
-        document.cookie.indexOf('gdpr_consent=1') > -1 ||
-        window.Cookiebot && window.Cookiebot.consented ||
-        window.__tcfapi
-      );
-    },
-
-    getEngagementLevel: function() {
-      var session = CookieManager.get('session') || {};
-      var level = 0;
-      if (session.pageviews > 1) level++;
-      if (session.pageviews > 3) level++;
-      if (session.number > 1) level++;
-      if (CookieManager.get('form_interaction')) level++;
-      if (CookieManager.get('conversion')) level++;
-      return level;
-    }
-  };
-
-
-  // ===================== TRAFFIC SOURCE DETECTION =====================
-  var TrafficSource = {
-    detect: function() {
-      var params = new URLSearchParams(window.location.search);
-      var referrer = document.referrer;
-
-      var source = {
-        utm_source: params.get('utm_source') || this.detectSourceFromReferrer(referrer),
-        utm_medium: params.get('utm_medium') || this.detectMediumFromReferrer(referrer),
-        utm_campaign: params.get('utm_campaign') || '',
-        utm_term: params.get('utm_term') || '',
-        utm_content: params.get('utm_content') || '',
-        utm_id: params.get('utm_id') || '',
-        gclid: params.get('gclid') || '',
-        gbraid: params.get('gbraid') || '',
-        wbraid: params.get('wbraid') || '',
-        fbclid: params.get('fbclid') || '',
-        ttclid: params.get('ttclid') || '',
-        msclkid: params.get('msclkid') || '',
-        dclid: params.get('dclid') || '',
-        li_fat_id: params.get('li_fat_id') || '',
-        referrer: referrer,
-        landing_page: window.location.href
-      };
-
-      // Store click IDs in cookies for attribution
-      var clickIds = ['gclid', 'gbraid', 'wbraid', 'fbclid', 'ttclid', 'msclkid', 'dclid', 'li_fat_id'];
-      clickIds.forEach(function(id) {
-        if (source[id]) {
-          CookieManager.set(id, source[id], CONFIG.cookieExpiry);
-        }
-      });
-
-      // Store first touch
-      if (!CookieManager.get('first_touch')) {
-        CookieManager.set('first_touch', source, CONFIG.cookieExpiry);
-      }
-      // Always update last touch
-      CookieManager.set('last_touch', source, CONFIG.cookieExpiry);
-
-      return source;
-    },
-
-    detectSourceFromReferrer: function(ref) {
-      if (!ref) return '(direct)';
-      if (ref.indexOf('google.') > -1) return 'google';
-      if (ref.indexOf('facebook.') > -1 || ref.indexOf('fb.') > -1) return 'facebook';
-      if (ref.indexOf('instagram.') > -1) return 'instagram';
-      if (ref.indexOf('youtube.') > -1) return 'youtube';
-      if (ref.indexOf('tiktok.') > -1) return 'tiktok';
-      if (ref.indexOf('twitter.') > -1 || ref.indexOf('t.co') > -1) return 'twitter';
-      if (ref.indexOf('linkedin.') > -1) return 'linkedin';
-      if (ref.indexOf('pinterest.') > -1) return 'pinterest';
-      if (ref.indexOf('bing.') > -1) return 'bing';
-      if (ref.indexOf('yahoo.') > -1) return 'yahoo';
-      try { return new URL(ref).hostname; } catch(e) { return '(referral)'; }
-    },
-
-    detectMediumFromReferrer: function(ref) {
-      if (!ref) return '(none)';
-      var searchEngines = ['google.', 'bing.', 'yahoo.', 'duckduckgo.', 'baidu.'];
-      var social = ['facebook.', 'instagram.', 'twitter.', 'linkedin.', 'tiktok.', 'pinterest.', 'youtube.'];
-      for (var i = 0; i < searchEngines.length; i++) {
-        if (ref.indexOf(searchEngines[i]) > -1) return 'organic';
-      }
-      for (var j = 0; j < social.length; j++) {
-        if (ref.indexOf(social[j]) > -1) return 'social';
-      }
-      return 'referral';
-    }
-  };
-
-
-  // ===================== PAGE DATA DETECTION =====================
-  var PageData = {
-    collect: function() {
-      return {
-        page_title: document.title,
-        page_location: window.location.href,
-        page_path: window.location.pathname,
-        page_hostname: window.location.hostname,
-        page_referrer: document.referrer,
-        page_hash: window.location.hash,
-        page_query: window.location.search,
-        content_group: this.detectContentGroup(),
-        page_type: this.detectPageType(),
-        language: document.documentElement.lang || navigator.language,
-        screen_resolution: screen.width + 'x' + screen.height,
-        viewport_size: window.innerWidth + 'x' + window.innerHeight,
-        user_agent: navigator.userAgent,
-        platform: this.detectPlatform(),
-        device_category: this.detectDevice(),
-        timestamp: new Date().toISOString(),
-        unix_timestamp: Date.now()
-      };
-    },
-
-    detectContentGroup: function() {
-      var path = window.location.pathname.toLowerCase();
-      if (path === '/' || path === '/index.html') return 'homepage';
-      if (path.indexOf('/product') > -1 || path.indexOf('/item') > -1) return 'product';
-      if (path.indexOf('/category') > -1 || path.indexOf('/collection') > -1) return 'category';
-      if (path.indexOf('/cart') > -1 || path.indexOf('/basket') > -1) return 'cart';
-      if (path.indexOf('/checkout') > -1) return 'checkout';
-      if (path.indexOf('/order') > -1 || path.indexOf('/confirmation') > -1) return 'confirmation';
-      if (path.indexOf('/blog') > -1 || path.indexOf('/article') > -1 || path.indexOf('/post') > -1) return 'blog';
-      if (path.indexOf('/contact') > -1) return 'contact';
-      if (path.indexOf('/about') > -1) return 'about';
-      if (path.indexOf('/service') > -1) return 'service';
-      if (path.indexOf('/book') > -1 || path.indexOf('/appointment') > -1) return 'booking';
-      if (path.indexOf('/pricing') > -1 || path.indexOf('/plan') > -1) return 'pricing';
-      if (path.indexOf('/faq') > -1 || path.indexOf('/help') > -1) return 'support';
-      if (path.indexOf('/login') > -1 || path.indexOf('/signin') > -1) return 'auth';
-      if (path.indexOf('/signup') > -1 || path.indexOf('/register') > -1) return 'registration';
-      if (path.indexOf('/account') > -1 || path.indexOf('/profile') > -1) return 'account';
-      if (path.indexOf('/search') > -1) return 'search';
-      if (path.indexOf('/thank') > -1 || path.indexOf('/success') > -1) return 'thank_you';
-      return 'other';
-    },
-
-    detectPageType: function() {
-      // Shopify detection
-      if (window.Shopify && window.Shopify.shop) {
-        if (window.meta && window.meta.page) return window.meta.page.pageType || 'shopify_page';
-      }
-      // WordPress detection
-      if (document.body && document.body.className) {
-        var bodyClass = document.body.className;
-        if (bodyClass.indexOf('single-product') > -1) return 'product';
-        if (bodyClass.indexOf('single-post') > -1) return 'blog_post';
-        if (bodyClass.indexOf('archive') > -1) return 'archive';
-        if (bodyClass.indexOf('home') > -1) return 'homepage';
-        if (bodyClass.indexOf('page') > -1) return 'page';
-        if (bodyClass.indexOf('woocommerce-cart') > -1) return 'cart';
-        if (bodyClass.indexOf('woocommerce-checkout') > -1) return 'checkout';
-      }
-      return this.detectContentGroup();
-    },
-
-    detectPlatform: function() {
-      if (window.Shopify) return 'shopify';
-      if (window.wp && window.wp.customize) return 'wordpress';
-      if (window.wc_add_to_cart_params) return 'woocommerce';
-      if (document.querySelector('meta[name="generator"][content*="WordPress"]')) return 'wordpress';
-      if (document.querySelector('meta[name="generator"][content*="Wix"]')) return 'wix';
-      if (document.querySelector('meta[name="generator"][content*="Squarespace"]')) return 'squarespace';
-      if (document.querySelector('[data-wf-site]')) return 'webflow';
-      if (document.querySelector('[data-framer-name]')) return 'framer';
-      if (window.Laravel) return 'laravel';
-      return 'custom';
-    },
-
-    detectDevice: function() {
-      var ua = navigator.userAgent;
-      if (/tablet|ipad|playbook|silk/i.test(ua)) return 'tablet';
-      if (/mobile|iphone|ipod|android|blackberry|opera mini|iemobile/i.test(ua)) return 'mobile';
-      return 'desktop';
-    }
-  };
-
-
-  // ===================== ECOMMERCE DATA DETECTION =====================
-  var EcommerceData = {
-    detectProduct: function() {
-      var product = null;
-
-      // Shopify product
-      if (window.ShopifyAnalytics && window.ShopifyAnalytics.meta && window.ShopifyAnalytics.meta.product) {
-        var sp = window.ShopifyAnalytics.meta.product;
-        product = {
-          item_id: sp.id ? sp.id.toString() : '',
-          item_name: sp.title || '',
-          item_brand: sp.vendor || '',
-          item_category: sp.type || '',
-          price: sp.price ? (sp.price / 100) : 0,
-          currency: window.Shopify.currency ? window.Shopify.currency.active : 'USD'
-        };
-      }
-
-      // WooCommerce product
-      if (!product && window.wc_single_product_params) {
-        var priceEl = document.querySelector('.price .woocommerce-Price-amount');
-        product = {
-          item_id: (document.querySelector('.product') ? document.querySelector('.product').getAttribute('data-product_id') : '') || '',
-          item_name: (document.querySelector('.product_title') ? document.querySelector('.product_title').textContent : '') || document.title,
-          price: priceEl ? parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) : 0,
-          currency: window.woocommerce_params ? window.woocommerce_params.currency : 'USD'
-        };
-      }
-
-      // JSON-LD product detection (universal)
-      if (!product) {
-        var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-        for (var i = 0; i < ldScripts.length; i++) {
-          try {
-            var ld = JSON.parse(ldScripts[i].textContent);
-            if (ld['@type'] === 'Product') {
-              product = {
-                item_id: ld.sku || ld.productID || '',
-                item_name: ld.name || '',
-                item_brand: ld.brand ? (ld.brand.name || ld.brand) : '',
-                item_category: ld.category || '',
-                price: ld.offers ? (ld.offers.price || (ld.offers[0] && ld.offers[0].price) || 0) : 0,
-                currency: ld.offers ? (ld.offers.priceCurrency || (ld.offers[0] && ld.offers[0].priceCurrency) || 'USD') : 'USD'
-              };
-              break;
-            }
-          } catch(e) {}
-        }
-      }
-
-      return product;
-    },
-
-    detectCart: function() {
-      // Shopify cart
-      if (window.Shopify && window.Shopify.shop) {
-        return { platform: 'shopify', detected: true };
-      }
-      // WooCommerce cart
-      if (document.querySelector('.woocommerce-cart-form')) {
-        return { platform: 'woocommerce', detected: true };
-      }
-      return null;
-    }
-  };
-
-
-  // ===================== FORM TRACKER =====================
-  var FormTracker = {
-    trackedForms: new Set(),
-
-    init: function() {
-      this.observeForms();
-      this.trackExistingForms();
-    },
-
-    trackExistingForms: function() {
-      var forms = document.querySelectorAll('form');
-      var self = this;
-      forms.forEach(function(form) {
-        self.attachFormListeners(form);
-      });
-    },
-
-    observeForms: function() {
-      var self = this;
-      var observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-          mutation.addedNodes.forEach(function(node) {
-            if (node.nodeType === 1) {
-              if (node.tagName === 'FORM') {
-                self.attachFormListeners(node);
-              }
-              var nestedForms = node.querySelectorAll ? node.querySelectorAll('form') : [];
-              nestedForms.forEach(function(form) {
-                self.attachFormListeners(form);
-              });
-            }
-          });
-        });
-      });
-      observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-    },
-
-    attachFormListeners: function(form) {
-      if (this.trackedForms.has(form)) return;
-      this.trackedForms.add(form);
-
-      var self = this;
-      var formId = form.id || form.name || form.getAttribute('data-form-id') || 'form_' + Math.random().toString(36).substr(2, 6);
-      var formName = form.getAttribute('data-form-name') || form.getAttribute('aria-label') || (form.querySelector('h1,h2,h3,legend') ? form.querySelector('h1,h2,h3,legend').textContent.trim() : '') || formId;
-
-      // Form Start (first interaction)
-      var started = false;
-      form.addEventListener('focusin', function() {
-        if (!started) {
-          started = true;
-          CookieManager.set('form_interaction', true, 1);
-          DataLayerPush.push({
-            event: 'form_start',
-            form_id: formId,
-            form_name: formName,
-            form_type: self.detectFormType(form),
-            form_destination: form.action || window.location.href
-          });
-        }
-      });
-
-      // Form Submit
-      form.addEventListener('submit', function(e) {
-        var formData = self.extractFormData(form);
-        var formType = self.detectFormType(form);
-
-        // Store user data from form
-        if (formData.email) UserDataCollector.set('email', formData.email);
-        if (formData.phone) UserDataCollector.set('phone', formData.phone);
-        if (formData.name) UserDataCollector.set('name', formData.name);
-        if (formData.first_name) UserDataCollector.set('first_name', formData.first_name);
-        if (formData.last_name) UserDataCollector.set('last_name', formData.last_name);
-        if (formData.company) UserDataCollector.set('company', formData.company);
-        if (formData.city) UserDataCollector.set('city', formData.city);
-        if (formData.country) UserDataCollector.set('country', formData.country);
-        if (formData.address) UserDataCollector.set('address', formData.address);
-
-        DataLayerPush.push({
-          event: 'form_submit',
-          form_id: formId,
-          form_name: formName,
-          form_type: formType,
-          form_destination: form.action || window.location.href,
-          form_data: formData,
-          form_fields_count: form.elements.length
-        });
-
-        // Push specific event based on form type
-        if (formType === 'lead' || formType === 'contact') {
-          DataLayerPush.push({
-            event: 'generate_lead',
-            currency: 'USD',
-            value: 0,
-            lead_source: formName,
-            lead_form_id: formId
-          });
-        }
-
-        if (formType === 'booking' || formType === 'appointment') {
-          DataLayerPush.push({
-            event: 'booking_submit',
-            booking_form_id: formId,
-            booking_form_name: formName,
-            booking_data: formData
-          });
-        }
-
-        CookieManager.set('conversion', { type: formType, form: formId, time: Date.now() }, CONFIG.cookieExpiry);
-      });
-    },
-
-    detectFormType: function(form) {
-      var action = (form.action || '').toLowerCase();
-      var formHtml = form.innerHTML.toLowerCase();
-      var formId = (form.id || '').toLowerCase();
-      var formClass = (form.className || '').toLowerCase();
-      var combined = action + ' ' + formId + ' ' + formClass + ' ' + formHtml;
-
-      if (combined.indexOf('book') > -1 || combined.indexOf('appointment') > -1 || combined.indexOf('schedule') > -1 || combined.indexOf('reservation') > -1) return 'booking';
-      if (combined.indexOf('checkout') > -1 || combined.indexOf('payment') > -1 || combined.indexOf('purchase') > -1) return 'checkout';
-      if (combined.indexOf('login') > -1 || combined.indexOf('signin') > -1 || combined.indexOf('sign-in') > -1) return 'login';
-      if (combined.indexOf('signup') > -1 || combined.indexOf('register') > -1 || combined.indexOf('sign-up') > -1) return 'signup';
-      if (combined.indexOf('subscribe') > -1 || combined.indexOf('newsletter') > -1) return 'newsletter';
-      if (combined.indexOf('search') > -1) return 'search';
-      if (combined.indexOf('contact') > -1 || combined.indexOf('enquir') > -1 || combined.indexOf('inquir') > -1) return 'contact';
-      if (combined.indexOf('lead') > -1 || combined.indexOf('quote') > -1 || combined.indexOf('request') > -1 || combined.indexOf('demo') > -1) return 'lead';
-      if (combined.indexOf('review') > -1 || combined.indexOf('feedback') > -1) return 'feedback';
-      return 'general';
-    },
-
-    extractFormData: function(form) {
-      var data = {};
-      var elements = form.elements;
-      for (var i = 0; i < elements.length; i++) {
-        var el = elements[i];
-        if (!el.name || el.type === 'password' || el.type === 'hidden' || el.type === 'submit' || el.type === 'button') continue;
-
-        var name = el.name.toLowerCase();
-        var value = el.value;
-
-        // Map common field names
-        if (name.indexOf('email') > -1 || el.type === 'email') data.email = value;
-        else if (name.indexOf('phone') > -1 || name.indexOf('tel') > -1 || el.type === 'tel') data.phone = value;
-        else if (name === 'name' || name.indexOf('full_name') > -1 || name.indexOf('fullname') > -1) data.name = value;
-        else if (name.indexOf('first') > -1 || name.indexOf('fname') > -1) data.first_name = value;
-        else if (name.indexOf('last') > -1 || name.indexOf('lname') > -1 || name.indexOf('surname') > -1) data.last_name = value;
-        else if (name.indexOf('company') > -1 || name.indexOf('business') > -1 || name.indexOf('organization') > -1) data.company = value;
-        else if (name.indexOf('city') > -1) data.city = value;
-        else if (name.indexOf('country') > -1) data.country = value;
-        else if (name.indexOf('address') > -1 || name.indexOf('street') > -1) data.address = value;
-        else if (name.indexOf('zip') > -1 || name.indexOf('postal') > -1) data.postal_code = value;
-        else if (name.indexOf('state') > -1 || name.indexOf('region') > -1) data.state = value;
-        else if (name.indexOf('message') > -1 || name.indexOf('comment') > -1 || name.indexOf('note') > -1) data.message = value ? 'provided' : '';
-        else if (name.indexOf('service') > -1) data.service = value;
-        else if (name.indexOf('budget') > -1) data.budget = value;
-        else if (name.indexOf('date') > -1 || name.indexOf('time') > -1) data.preferred_datetime = value;
-        else data[name] = value;
-      }
-
-      // Build full name if not provided
-      if (!data.name && data.first_name) {
-        data.name = (data.first_name + ' ' + (data.last_name || '')).trim();
-      }
-
-      return data;
-    }
-  };
-
-
-  // ===================== ENGAGEMENT TRACKER =====================
-  var EngagementTracker = {
-    scrollDepths: [25, 50, 75, 90, 100],
-    firedScrolls: {},
-    startTime: Date.now(),
-
-    init: function() {
-      this.trackScroll();
-      this.trackClicks();
-      this.trackVideoEngagement();
-      this.trackFileDownloads();
-      this.trackOutboundLinks();
-      this.trackTimeOnPage();
-      this.trackCTAClicks();
-    },
-
-    trackScroll: function() {
-      var self = this;
-      var throttle = false;
-      window.addEventListener('scroll', function() {
-        if (throttle) return;
-        throttle = true;
-        setTimeout(function() { throttle = false; }, 200);
-
-        var scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        var docHeight = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight) - window.innerHeight;
-        var scrollPercent = docHeight > 0 ? Math.round((scrollTop / docHeight) * 100) : 0;
-
-        self.scrollDepths.forEach(function(depth) {
-          if (scrollPercent >= depth && !self.firedScrolls[depth]) {
-            self.firedScrolls[depth] = true;
-            DataLayerPush.push({
-              event: 'scroll',
-              percent_scrolled: depth
-            });
-          }
-        });
-      });
-    },
-
-    trackClicks: function() {
-      document.addEventListener('click', function(e) {
-        var target = e.target.closest('a, button, [role="button"], [data-track]');
-        if (!target) return;
-
-        var clickData = {
-          event: 'click',
-          click_element: target.tagName.toLowerCase(),
-          click_text: (target.textContent || '').trim().substring(0, 100),
-          click_id: target.id || '',
-          click_classes: target.className || '',
-          click_url: target.href || ''
-        };
-
-        // Track tel: and mailto: clicks
-        if (target.href) {
-          if (target.href.indexOf('tel:') === 0) {
-            clickData.event = 'click_to_call';
-            clickData.phone_number = target.href.replace('tel:', '');
-          } else if (target.href.indexOf('mailto:') === 0) {
-            clickData.event = 'click_to_email';
-            clickData.email_address = target.href.replace('mailto:', '').split('?')[0];
-          }
-        }
-
-        DataLayerPush.push(clickData);
-      });
-    },
-
-    trackCTAClicks: function() {
-      document.addEventListener('click', function(e) {
-        var target = e.target.closest('a, button, [role="button"]');
-        if (!target) return;
-
-        var text = (target.textContent || '').toLowerCase().trim();
-        var ctaKeywords = ['buy', 'purchase', 'add to cart', 'book now', 'schedule', 'get started',
-          'sign up', 'subscribe', 'download', 'free trial', 'demo', 'contact', 'get quote',
-          'learn more', 'shop now', 'order now', 'apply now', 'register', 'join',
-          'start free', 'try free', 'claim', 'reserve'];
-
-        var isCta = ctaKeywords.some(function(kw) { return text.indexOf(kw) > -1; });
-
-        if (isCta || target.getAttribute('data-cta') || target.classList.contains('cta')) {
-          DataLayerPush.push({
-            event: 'cta_click',
-            cta_text: text.substring(0, 100),
-            cta_url: target.href || '',
-            cta_location: target.closest('header') ? 'header' : target.closest('footer') ? 'footer' : target.closest('[class*="hero"]') ? 'hero' : 'body'
-          });
-        }
-      });
-    },
-
-    trackVideoEngagement: function() {
-      // YouTube iframe detection
-      var videos = document.querySelectorAll('iframe[src*="youtube"], iframe[src*="vimeo"], video');
-      if (videos.length > 0) {
-        DataLayerPush.push({
-          event: 'video_detected',
-          video_count: videos.length
-        });
-      }
-    },
-
-    trackFileDownloads: function() {
-      document.addEventListener('click', function(e) {
-        var link = e.target.closest('a[href]');
-        if (!link) return;
-        var href = link.href || '';
-        var extensions = /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|csv|txt|rtf|mp3|mp4|avi|mov)(\?|$)/i;
-        if (extensions.test(href)) {
-          DataLayerPush.push({
-            event: 'file_download',
-            file_name: href.split('/').pop().split('?')[0],
-            file_extension: href.match(extensions)[1].toLowerCase(),
-            link_url: href,
-            link_text: (link.textContent || '').trim().substring(0, 100)
-          });
-        }
-      });
-    },
-
-    trackOutboundLinks: function() {
-      document.addEventListener('click', function(e) {
-        var link = e.target.closest('a[href]');
-        if (!link || !link.href) return;
-        try {
-          var url = new URL(link.href);
-          if (url.hostname !== window.location.hostname) {
-            DataLayerPush.push({
-              event: 'outbound_link',
-              outbound_url: link.href,
-              outbound_domain: url.hostname,
-              link_text: (link.textContent || '').trim().substring(0, 100)
-            });
-          }
-        } catch(e) {}
-      });
-    },
-
-    trackTimeOnPage: function() {
-      var self = this;
-      var intervals = [15, 30, 60, 120, 300]; // seconds
-      intervals.forEach(function(sec) {
-        setTimeout(function() {
-          DataLayerPush.push({
-            event: 'time_on_page',
-            time_seconds: sec,
-            engaged: true
-          });
-        }, sec * 1000);
-      });
-    }
-  };
-
-
-  // ===================== LOCAL SERVICE TRACKING =====================
-  var LocalServiceTracker = {
-    init: function() {
-      this.detectLocalBusiness();
-      this.trackDirections();
-      this.trackCallClicks();
-    },
-
-    detectLocalBusiness: function() {
-      var ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
-      for (var i = 0; i < ldScripts.length; i++) {
-        try {
-          var ld = JSON.parse(ldScripts[i].textContent);
-          if (ld['@type'] === 'LocalBusiness' || ld['@type'] === 'Service' || 
-              ld['@type'] === 'Restaurant' || ld['@type'] === 'Store' ||
-              ld['@type'] === 'MedicalBusiness' || ld['@type'] === 'LegalService' ||
-              ld['@type'] === 'FinancialService' || ld['@type'] === 'RealEstateAgent') {
-            DataLayerPush.push({
-              event: 'local_business_detected',
-              business_name: ld.name || '',
-              business_type: ld['@type'],
-              business_address: ld.address ? (ld.address.streetAddress || '') : '',
-              business_city: ld.address ? (ld.address.addressLocality || '') : '',
-              business_phone: ld.telephone || ''
-            });
-            break;
-          }
-        } catch(e) {}
-      }
-    },
-
-    trackDirections: function() {
-      document.addEventListener('click', function(e) {
-        var link = e.target.closest('a[href]');
-        if (!link) return;
-        var href = link.href || '';
-        if (href.indexOf('maps.google') > -1 || href.indexOf('maps.apple') > -1 || 
-            href.indexOf('waze.com') > -1 || href.indexOf('goo.gl/maps') > -1) {
-          DataLayerPush.push({
-            event: 'get_directions',
-            direction_url: href,
-            direction_source: link.textContent.trim().substring(0, 100)
-          });
-        }
-      });
-    },
-
-    trackCallClicks: function() {
-      // Already handled in EngagementTracker.trackClicks()
-    }
-  };
-
-
-  // ===================== DATA LAYER PUSH ENGINE =====================
-  var DataLayerPush = {
-    init: function() {
-      window[CONFIG.dataLayerName] = window[CONFIG.dataLayerName] || [];
-    },
-
-    push: function(eventData) {
-      window[CONFIG.dataLayerName] = window[CONFIG.dataLayerName] || [];
-
-      // Enrich every event with standard parameters
-      var session = CookieManager.get('session') || {};
-      var enrichedData = Object.assign({}, eventData, {
-        // GA4 standard parameters
-        client_id: IDGenerator.clientId(),
-        session_id: session.id || IDGenerator.sessionId(),
-        session_number: session.number || 1,
-        engagement_time_msec: Date.now() - (session.startTime || Date.now()),
-
-        // User properties
-        user_id: UserDataCollector.get('user_id') || undefined,
-
-        // Event quality
-        event_match_quality: QualityScore.calculate(),
-        event_match_grade: QualityScore.getGrade(),
-
-        // Attribution
-        traffic_source: CookieManager.get('last_touch') ? CookieManager.get('last_touch').utm_source : '(direct)',
-        traffic_medium: CookieManager.get('last_touch') ? CookieManager.get('last_touch').utm_medium : '(none)',
-
-        // Platform info
-        platform_detected: PageData.detectPlatform(),
-        device_category: PageData.detectDevice(),
-
-        // Timestamp
-        event_timestamp: new Date().toISOString(),
-        event_unix_timestamp: Date.now()
-      });
-
-      // Remove undefined values
-      Object.keys(enrichedData).forEach(function(key) {
-        if (enrichedData[key] === undefined || enrichedData[key] === '') {
-          delete enrichedData[key];
-        }
-      });
-
-      window[CONFIG.dataLayerName].push(enrichedData);
-
-      if (CONFIG.debugMode) {
-        console.log('[UDL]', eventData.event, enrichedData);
-      }
-    }
-  };
-
-
-  // ===================== INDUSTRY-SPECIFIC EVENTS =====================
-  var IndustryEvents = {
-    // Ecommerce events (GA4 standard)
-    viewItem: function(item) {
-      DataLayerPush.push({
-        event: 'view_item',
-        ecommerce: {
-          currency: item.currency || 'USD',
-          value: item.price || 0,
-          items: [item]
-        }
-      });
-    },
-
-    addToCart: function(item, quantity) {
-      DataLayerPush.push({
-        event: 'add_to_cart',
-        ecommerce: {
-          currency: item.currency || 'USD',
-          value: (item.price || 0) * (quantity || 1),
-          items: [Object.assign({}, item, { quantity: quantity || 1 })]
-        }
-      });
-    },
-
-    beginCheckout: function(items, value, currency) {
-      DataLayerPush.push({
-        event: 'begin_checkout',
-        ecommerce: {
-          currency: currency || 'USD',
-          value: value || 0,
-          items: items || []
-        }
-      });
-    },
-
-    purchase: function(transaction) {
-      DataLayerPush.push({
-        event: 'purchase',
-        ecommerce: {
-          transaction_id: transaction.id,
-          value: transaction.value,
-          currency: transaction.currency || 'USD',
-          tax: transaction.tax || 0,
-          shipping: transaction.shipping || 0,
-          coupon: transaction.coupon || '',
-          items: transaction.items || []
-        }
-      });
-    },
-
-    // Lead Generation events
-    generateLead: function(data) {
-      DataLayerPush.push({
-        event: 'generate_lead',
-        currency: data.currency || 'USD',
-        value: data.value || 0,
-        lead_source: data.source || '',
-        lead_type: data.type || 'general',
-        lead_quality: data.quality || 'standard'
-      });
-    },
-
-    // Booking/Appointment events
-    bookAppointment: function(data) {
-      DataLayerPush.push({
-        event: 'book_appointment',
-        appointment_type: data.type || '',
-        appointment_date: data.date || '',
-        appointment_time: data.time || '',
-        service_name: data.service || '',
-        service_value: data.value || 0,
-        currency: data.currency || 'USD'
-      });
-    },
-
-    // Service Request
-    requestService: function(data) {
-      DataLayerPush.push({
-        event: 'request_service',
-        service_type: data.type || '',
-        service_name: data.name || '',
-        service_area: data.area || '',
-        estimated_value: data.value || 0
-      });
-    },
-
-    // Quote Request
-    requestQuote: function(data) {
-      DataLayerPush.push({
-        event: 'request_quote',
-        quote_type: data.type || '',
-        quote_service: data.service || '',
-        quote_budget: data.budget || '',
-        quote_urgency: data.urgency || 'normal'
-      });
-    }
-  };
-
-
-  // ===================== CONSENT & PRIVACY LAYER =====================
-  var ConsentManager = {
-    init: function() {
-      this.detectConsent();
-      this.listenForConsentChanges();
-    },
-
-    detectConsent: function() {
-      var consent = {
-        analytics: true,
-        marketing: true,
-        personalization: true,
-        functionality: true
-      };
-
-      // Cookiebot
-      if (window.Cookiebot) {
-        consent.analytics = window.Cookiebot.consent ? window.Cookiebot.consent.statistics : false;
-        consent.marketing = window.Cookiebot.consent ? window.Cookiebot.consent.marketing : false;
-        consent.personalization = window.Cookiebot.consent ? window.Cookiebot.consent.preferences : false;
-      }
-
-      // OneTrust
-      if (window.OnetrustActiveGroups) {
-        consent.analytics = window.OnetrustActiveGroups.indexOf('C0002') > -1;
-        consent.marketing = window.OnetrustActiveGroups.indexOf('C0004') > -1;
-        consent.personalization = window.OnetrustActiveGroups.indexOf('C0003') > -1;
-      }
-
-      // CookieYes
-      if (document.cookie.indexOf('cookieyes-consent') > -1) {
-        var cyConsent = CookieManager.get('cookieyes-consent');
-        if (cyConsent) {
-          consent.analytics = cyConsent.indexOf('analytics:yes') > -1;
-          consent.marketing = cyConsent.indexOf('advertisement:yes') > -1;
-        }
-      }
-
-      CookieManager.set('consent', consent, CONFIG.cookieExpiry);
-
-      DataLayerPush.push({
-        event: 'consent_status',
-        consent_analytics: consent.analytics,
-        consent_marketing: consent.marketing,
-        consent_personalization: consent.personalization
-      });
-
-      return consent;
-    },
-
-    listenForConsentChanges: function() {
-      var self = this;
-      // Cookiebot event
-      window.addEventListener('CookiebotOnAccept', function() { self.detectConsent(); });
-      window.addEventListener('CookiebotOnDecline', function() { self.detectConsent(); });
-      // OneTrust event
-      window.addEventListener('consent.onetrust', function() { self.detectConsent(); });
-      // Generic consent event
-      window.addEventListener('consentUpdate', function() { self.detectConsent(); });
-    }
-  };
-
-
-  // ===================== ENHANCED CONVERSIONS DATA =====================
-  var EnhancedConversions = {
-    getUserData: function() {
-      var userData = UserDataCollector.getAll();
-      var ecData = {};
-
-      if (userData.email) ecData.email = userData.email.toLowerCase().trim();
-      if (userData.phone) ecData.phone_number = userData.phone.replace(/[^0-9+]/g, '');
-      if (userData.first_name) ecData.first_name = userData.first_name;
-      if (userData.last_name) ecData.last_name = userData.last_name;
-      if (userData.name && !userData.first_name) {
-        var parts = userData.name.split(' ');
-        ecData.first_name = parts[0];
-        ecData.last_name = parts.slice(1).join(' ');
-      }
-      if (userData.address) ecData.street = userData.address;
-      if (userData.city) ecData.city = userData.city;
-      if (userData.state) ecData.region = userData.state;
-      if (userData.postal_code) ecData.postal_code = userData.postal_code;
-      if (userData.country) ecData.country = userData.country;
-
-      return ecData;
-    },
-
-    pushUserData: function() {
-      var ecData = this.getUserData();
-      if (Object.keys(ecData).length > 0) {
-        window[CONFIG.dataLayerName].push({
-          event: 'user_data_ready',
-          user_data: ecData
-        });
-      }
-    }
-  };
-
-
-  // ===================== PLATFORM-SPECIFIC HOOKS =====================
-  var PlatformHooks = {
-    init: function() {
-      var platform = PageData.detectPlatform();
-
-      switch(platform) {
-        case 'shopify': this.initShopify(); break;
-        case 'woocommerce': this.initWooCommerce(); break;
-        case 'wordpress': this.initWordPress(); break;
-        case 'wix': this.initWix(); break;
-        case 'squarespace': this.initSquarespace(); break;
-        case 'webflow': this.initWebflow(); break;
-        case 'framer': this.initFramer(); break;
-      }
-    },
-
-    initShopify: function() {
-      // Listen for Shopify AJAX cart events
-      var originalFetch = window.fetch;
-      if (originalFetch) {
-        window.fetch = function() {
-          var args = arguments;
-          var url = args[0] || '';
-          if (typeof url === 'string') {
-            if (url.indexOf('/cart/add') > -1) {
-              return originalFetch.apply(this, args).then(function(response) {
-                response.clone().json().then(function(data) {
-                  if (data && data.items) {
-                    data.items.forEach(function(item) {
-                      IndustryEvents.addToCart({
-                        item_id: item.product_id ? item.product_id.toString() : '',
-                        item_name: item.title || '',
-                        item_variant: item.variant_title || '',
-                        price: item.price ? item.price / 100 : 0,
-                        currency: window.Shopify.currency ? window.Shopify.currency.active : 'USD'
-                      }, item.quantity || 1);
-                    });
-                  }
-                }).catch(function(){});
-                return response;
-              });
-            }
-          }
-          return originalFetch.apply(this, args);
-        };
-      }
-
-      // Detect product view
-      var product = EcommerceData.detectProduct();
-      if (product) IndustryEvents.viewItem(product);
-    },
-
-    initWooCommerce: function() {
-      // WooCommerce add to cart button click
-      document.addEventListener('click', function(e) {
-        var btn = e.target.closest('.add_to_cart_button, .single_add_to_cart_button');
-        if (btn) {
-          var product = EcommerceData.detectProduct();
-          if (product) {
-            var qty = document.querySelector('input.qty');
-            IndustryEvents.addToCart(product, qty ? parseInt(qty.value) : 1);
-          }
-        }
-      });
-
-      // Detect product view
-      var product = EcommerceData.detectProduct();
-      if (product) IndustryEvents.viewItem(product);
-    },
-
-    initWordPress: function() {
-      // Generic WordPress tracking
-      if (document.querySelector('.wpcf7-form')) {
-        // Contact Form 7 success detection
-        document.addEventListener('wpcf7mailsent', function(event) {
-          DataLayerPush.push({
-            event: 'generate_lead',
-            lead_source: 'contact_form_7',
-            form_id: event.detail ? event.detail.contactFormId : '',
-            currency: 'USD',
-            value: 0
-          });
-        });
-      }
-
-      // Gravity Forms
-      if (window.gform) {
-        document.addEventListener('gform_confirmation_loaded', function(event) {
-          DataLayerPush.push({
-            event: 'generate_lead',
-            lead_source: 'gravity_forms',
-            form_id: event.detail ? event.detail.formId : '',
-            currency: 'USD',
-            value: 0
-          });
-        });
-      }
-    },
-
-    initWix: function() {
-      // Wix form detection via MutationObserver
-      var observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-          mutation.addedNodes.forEach(function(node) {
-            if (node.nodeType === 1 && node.querySelector && node.querySelector('[data-testid="thankYouMessage"]')) {
-              DataLayerPush.push({
-                event: 'generate_lead',
-                lead_source: 'wix_form',
-                currency: 'USD',
-                value: 0
-              });
-            }
-          });
-        });
-      });
-      observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-    },
-
-    initSquarespace: function() {
-      // Squarespace form submission detection
-      document.addEventListener('submit', function(e) {
-        var form = e.target.closest('.sqs-block-form');
-        if (form) {
-          DataLayerPush.push({
-            event: 'generate_lead',
-            lead_source: 'squarespace_form',
-            currency: 'USD',
-            value: 0
-          });
-        }
-      });
-    },
-
-    initWebflow: function() {
-      // Webflow form success detection
-      var observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-          mutation.addedNodes.forEach(function(node) {
-            if (node.nodeType === 1 && node.classList && node.classList.contains('w-form-done')) {
-              DataLayerPush.push({
-                event: 'generate_lead',
-                lead_source: 'webflow_form',
-                currency: 'USD',
-                value: 0
-              });
-            }
-          });
-        });
-      });
-      observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-    },
-
-    initFramer: function() {
-      // Framer form detection
-      document.addEventListener('submit', function(e) {
-        if (e.target.closest('[data-framer-name]')) {
-          DataLayerPush.push({
-            event: 'generate_lead',
-            lead_source: 'framer_form',
-            currency: 'USD',
-            value: 0
-          });
-        }
-      });
-    }
-  };
-
-
-  // ===================== MAIN INITIALIZATION =====================
-  function initUniversalDataLayer() {
-    // Initialize data layer
-    DataLayerPush.init();
-
-    // Initialize user data
-    UserDataCollector.init();
-
-    // Collect all data
-    var pageData = PageData.collect();
-    var trafficSource = TrafficSource.detect();
-    var session = CookieManager.get('session') || {};
-    var firstTouch = CookieManager.get('first_touch') || {};
-
-    // Push comprehensive page_view event
-    DataLayerPush.push({
-      event: 'page_view',
-
-      // Page parameters
-      page_title: pageData.page_title,
-      page_location: pageData.page_location,
-      page_path: pageData.page_path,
-      page_hostname: pageData.page_hostname,
-      page_referrer: pageData.page_referrer,
-      content_group: pageData.content_group,
-      page_type: pageData.page_type,
-      language: pageData.language,
-
-      // Device & Tech
-      screen_resolution: pageData.screen_resolution,
-      viewport_size: pageData.viewport_size,
-      device_category: pageData.device_category,
-
-      // Session parameters
-      session_id: session.id || IDGenerator.sessionId(),
-      session_number: session.number || 1,
-      session_pageviews: session.pageviews || 1,
-      is_new_user: (session.number || 1) === 1,
-
-      // Traffic source (last touch)
-      source: trafficSource.utm_source,
-      medium: trafficSource.utm_medium,
-      campaign: trafficSource.utm_campaign,
-      term: trafficSource.utm_term,
-      content: trafficSource.utm_content,
-      campaign_id: trafficSource.utm_id,
-
-      // Click IDs
-      gclid: trafficSource.gclid || CookieManager.get('gclid') || undefined,
-      gbraid: trafficSource.gbraid || CookieManager.get('gbraid') || undefined,
-      wbraid: trafficSource.wbraid || CookieManager.get('wbraid') || undefined,
-      fbclid: trafficSource.fbclid || CookieManager.get('fbclid') || undefined,
-      ttclid: trafficSource.ttclid || CookieManager.get('ttclid') || undefined,
-      msclkid: trafficSource.msclkid || CookieManager.get('msclkid') || undefined,
-
-      // First touch attribution
-      first_touch_source: firstTouch.utm_source || '',
-      first_touch_medium: firstTouch.utm_medium || '',
-      first_touch_campaign: firstTouch.utm_campaign || '',
-
-      // User data (hashed for privacy)
-      user_email_hash: UserDataCollector.hashEmail(UserDataCollector.get('email')),
-      user_phone_hash: UserDataCollector.hashPhone(UserDataCollector.get('phone')),
-      user_logged_in: !!UserDataCollector.get('user_id'),
-
-      // Event quality
-      event_match_quality_score: QualityScore.calculate(),
-      event_match_quality_grade: QualityScore.getGrade(),
-
-      // Platform
-      platform: pageData.platform,
-      udl_version: '2.0.0'
-    });
-
-    // Initialize all trackers
-    ConsentManager.init();
-    FormTracker.init();
-    EngagementTracker.init();
-    LocalServiceTracker.init();
-    PlatformHooks.init();
-
-    // Push enhanced conversion data if available
-    EnhancedConversions.pushUserData();
-
-    // Expose global API for manual tracking
-    window.UDL = {
-      push: DataLayerPush.push.bind(DataLayerPush),
-      setUser: function(data) {
-        for (var key in data) { UserDataCollector.set(key, data[key]); }
-        EnhancedConversions.pushUserData();
-      },
-      trackEvent: function(eventName, params) {
-        DataLayerPush.push(Object.assign({ event: eventName }, params || {}));
-      },
-      ecommerce: IndustryEvents,
-      getQualityScore: function() {
-        return { score: QualityScore.calculate(), grade: QualityScore.getGrade() };
-      },
-      getUserData: function() { return UserDataCollector.getAll(); },
-      getSession: function() { return CookieManager.get('session'); },
-      getAttribution: function() {
-        return {
-          firstTouch: CookieManager.get('first_touch'),
-          lastTouch: CookieManager.get('last_touch')
-        };
-      },
-      debug: function(enable) {
-        CONFIG.debugMode = enable !== false;
-        console.log('[UDL] Debug mode:', CONFIG.debugMode ? 'ON' : 'OFF');
-      },
-      version: '2.0.0'
+  // ─── HELPERS ────────────────────────────────────────────────────────
+  function ck(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):'';}
+  function sc(n,v,days){var d=new Date();d.setTime(d.getTime()+(days||390)*86400000);document.cookie=n+'='+encodeURIComponent(v)+';path=/;expires='+d.toUTCString()+';domain='+C.domain+';SameSite=Lax';}
+  function el(s){var e=document.querySelector(s);return e&&e.value?e.value.trim():'';}
+  function getStored(){try{return JSON.parse(ck('_pts_ud'))||{};}catch(e){return {};}}
+  function saveUser(obj){var cur=getStored();for(var k in obj){if(obj[k]&&obj[k]!=='')cur[k]=obj[k];}sc('_pts_ud',JSON.stringify(cur),390);return cur;}
+  var params = new URLSearchParams(location.search);
+
+  // ─── EXTERNAL ID (persistent) ───────────────────────────────────────
+  var eid = ck('_pts_eid');
+  if(!eid){eid='eid_'+Date.now()+'_'+Math.random().toString(36).substr(2,9);sc('_pts_eid',eid,390);}
+
+  // ─── COLLECT USER DATA FROM FORM FIELDS (live) ──────────────────────
+  function collectFromDOM(){
+    return {
+      email: el('#billing_email,input[type="email"],input[name*="email"],.wpcf7-email,input[name="your-email"],input[name="email"]'),
+      phone_number: el('#billing_phone,input[type="tel"],input[name*="phone"],input[name="your-phone"],input[name="tel"]'),
+      first_name: el('#billing_first_name,input[name*="first_name"],input[name="your-name"],input[name="first-name"]'),
+      last_name: el('#billing_last_name,input[name*="last_name"],input[name="last-name"]'),
+      city: el('#billing_city,input[name*="city"]'),
+      region: el('#billing_state,select[name="billing_state"],input[name*="state"]'),
+      postal_code: el('#billing_postcode,input[name*="postcode"],input[name*="zip"]'),
+      country: el('#billing_country,select[name="billing_country"],input[name*="country"]')
     };
+  }
 
-    if (CONFIG.debugMode) {
-      console.log('[UDL] Universal Data Layer initialized');
-      console.log('[UDL] Platform:', pageData.platform);
-      console.log('[UDL] Quality Score:', QualityScore.calculate(), '(' + QualityScore.getGrade() + ')');
-      console.log('[UDL] Session:', session);
+  // ─── BUILD USER_DATA (cookies + DOM + browser signals) ──────────────
+  function getUserData(){
+    var stored = getStored();
+    var dom = collectFromDOM();
+    // Merge: DOM overrides stored if not empty
+    var merged = {};
+    for(var k in stored){merged[k]=stored[k];}
+    for(var k2 in dom){if(dom[k2])merged[k2]=dom[k2];}
+    // Always add browser/session signals
+    merged.external_id = eid;
+    merged.fbp = ck('_fbp');
+    merged.fbc = ck('_fbc') || (params.get('fbclid') ? 'fb.1.'+Date.now()+'.'+params.get('fbclid') : '');
+    merged.client_id = (function(){var g=ck('_ga');if(!g)return '';var p=g.split('.');return p.length>=4?p[2]+'.'+p[3]:'';}());
+    merged.gclid = params.get('gclid') || ck('_gcl_aw') || stored.gclid || '';
+    merged.fbclid = params.get('fbclid') || stored.fbclid || '';
+    merged.ttclid = params.get('ttclid') || stored.ttclid || '';
+    merged.li_fat_id = params.get('li_fat_id') || stored.li_fat_id || '';
+    merged.user_agent = navigator.userAgent;
+    merged.page_location = location.href;
+    merged.page_referrer = document.referrer;
+    // Save click IDs to cookies for persistence
+    if(params.get('gclid'))saveUser({gclid:params.get('gclid')});
+    if(params.get('fbclid'))saveUser({fbclid:params.get('fbclid')});
+    if(params.get('ttclid'))saveUser({ttclid:params.get('ttclid')});
+    if(params.get('li_fat_id'))saveUser({li_fat_id:params.get('li_fat_id')});
+    return merged;
+  }
+
+  var user_data = getUserData();
+
+  // ─── PAGE TYPE ──────────────────────────────────────────────────────
+  var path = location.pathname.toLowerCase(), body = document.body.className||'';
+  var PAGE = 'other';
+  if(body.match(/single-product/)||document.querySelector('.product_title,[data-product-id]')) PAGE='product';
+  else if(body.match(/woocommerce-cart/)||path.match(/\/cart\/?$/)) PAGE='cart';
+  else if(path.match(/order-received|thank.?you/)||body.match(/order-received/)) PAGE='purchase';
+  else if(body.match(/woocommerce-checkout/)||path.match(/\/checkout\/?$/)) PAGE='checkout';
+  else if(body.match(/woocommerce-shop|post-type-archive-product/)||path.match(/\/shop\/?$/)) PAGE='product_list';
+  else if(body.match(/tax-product_cat/)) PAGE='product_category';
+  else if(body.match(/search|is-search/)||path.indexOf('?s=')>-1) PAGE='search';
+  else if(path==='/'||body.match(/home|front-page/)) PAGE='home';
+
+  // ─── PRODUCT DATA ───────────────────────────────────────────────────
+  var items = [];
+  try{var lds=document.querySelectorAll('script[type="application/ld+json"]');for(var i=0;i<lds.length;i++){var j=JSON.parse(lds[i].textContent);var pr=j['@type']==='Product'?j:null;if(!pr&&j['@graph']){for(var g=0;g<j['@graph'].length;g++){if(j['@graph'][g]['@type']==='Product'){pr=j['@graph'][g];break;}}}if(pr){var of=Array.isArray(pr.offers)?pr.offers[0]:pr.offers||{};items.push({item_id:pr.sku||pr.productID||'',item_name:pr.name||'',price:parseFloat(of.price||of.lowPrice||0),item_brand:pr.brand?(pr.brand.name||pr.brand):'',item_category:pr.category||'',currency:of.priceCurrency||C.currency,quantity:1});}}}catch(ex){}
+  if(!items.length&&PAGE==='product'){var nm=document.querySelector('.product_title,h1.entry-title');var pc=document.querySelector('.price ins .amount,.price > .amount');if(nm)items.push({item_id:(body.match(/postid-(\d+)/)||['',''])[1],item_name:nm.textContent.trim(),price:pc?parseFloat(pc.textContent.replace(/[^0-9.]/g,'')):0,currency:C.currency,quantity:1});}
+
+  // ─── ORDER DATA ────────────────────────────────────────────────────
+  var order = null;
+  if(PAGE==='purchase'){order={};for(var k=0;k<DL.length;k++){if(DL[k]&&DL[k].ecommerce&&DL[k].ecommerce.transaction_id){order=DL[k].ecommerce;break;}}if(!order.transaction_id){var oe=document.querySelector('.woocommerce-order-overview__order strong,.order-number');var te=document.querySelector('.order-total .amount');if(oe)order.transaction_id=oe.textContent.trim();if(te)order.value=parseFloat(te.textContent.replace(/[^0-9.]/g,''))||0;var um=path.match(/order-received\/(\d+)/);if(um&&!order.transaction_id)order.transaction_id=um[1];}if(!order.transaction_id)order=null;}
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // EVENTS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  DL.push({'event':'page_view','page_type':PAGE,'page_location':location.href,'page_path':path,'page_referrer':document.referrer,'user_data':user_data});
+
+  if(PAGE==='product'&&items.length){var p=items[0];DL.push({ecommerce:null});DL.push({'event':'view_item','event_id':'vi_'+Date.now(),'ecommerce':{currency:p.currency,value:p.price,items:items},'user_data':user_data,'content_ids':[p.item_id],'content_name':p.item_name,'content_type':'product','content_category':p.item_category,'contents':[{content_id:p.item_id,content_name:p.item_name,price:p.price,quantity:1}],'product_id':p.item_id,'product_name':p.item_name,'value':p.price,'currency':p.currency});DL.push({'event':'view_item_remarketing','google_business_vertical':C.vertical,'dynx_itemid':[p.item_id],'dynx_pagetype':'offerdetail','dynx_totalvalue':p.price,'ecomm_prodid':[p.item_id],'ecomm_pagetype':'product','ecomm_totalvalue':p.price});}
+
+  if((PAGE==='product_list'||PAGE==='product_category')&&items.length){var ids=items.map(function(x){return x.item_id;}),tv=items.reduce(function(s,x){return s+x.price;},0);DL.push({ecommerce:null});DL.push({'event':'view_item_list','ecommerce':{item_list_name:PAGE==='product_category'?document.title:'Shop',items:items},'user_data':user_data,'content_ids':ids,'content_type':'product','value':tv,'currency':C.currency});DL.push({'event':'view_item_list_remarketing','google_business_vertical':C.vertical,'dynx_itemid':ids,'dynx_pagetype':'category','dynx_totalvalue':tv,'ecomm_prodid':ids,'ecomm_pagetype':'category','ecomm_totalvalue':tv});}
+
+  if(PAGE==='search'){var sq=params.get('s')||(document.querySelector('input[name="s"]')||{}).value||'';DL.push({'event':'search','search_term':sq,'user_data':user_data,'search_string':sq,'query':sq});DL.push({'event':'view_search_results_remarketing','google_business_vertical':C.vertical,'dynx_pagetype':'searchresults','dynx_itemid':[],'dynx_totalvalue':0,'ecomm_pagetype':'searchresults'});}
+
+  if(PAGE==='checkout'){DL.push({ecommerce:null});DL.push({'event':'begin_checkout','event_id':'chk_'+Date.now(),'ecommerce':{currency:C.currency},'user_data':user_data});DL.push({'event':'begin_checkout_remarketing','google_business_vertical':C.vertical,'dynx_pagetype':'conversionintent','ecomm_pagetype':'cart'});}
+
+  if(PAGE==='purchase'&&order&&order.transaction_id){var cids=(order.items||[]).map(function(x){return x.item_id||x.id||'';});DL.push({ecommerce:null});DL.push({'event':'purchase','event_id':'pur_'+order.transaction_id,'ecommerce':{transaction_id:order.transaction_id,value:order.value||0,currency:order.currency||C.currency,tax:order.tax||0,shipping:order.shipping||0,items:order.items||[]},'user_data':user_data,'content_ids':cids,'content_type':'product','num_items':cids.length,'order_id':order.transaction_id,'contents':cids.map(function(id){return{content_id:id};}),'value':order.value||0,'currency':order.currency||C.currency,'new_customer':!document.cookie.match(/_pts_purchased/)});sc('_pts_purchased','1',365);DL.push({'event':'purchase_remarketing','google_business_vertical':C.vertical,'dynx_itemid':cids,'dynx_pagetype':'conversion','dynx_totalvalue':order.value||0,'ecomm_prodid':cids,'ecomm_pagetype':'purchase','ecomm_totalvalue':order.value||0,'transaction_id':order.transaction_id});}
+
+  if(PAGE==='home')DL.push({'event':'page_view_remarketing','google_business_vertical':C.vertical,'dynx_pagetype':'home','ecomm_pagetype':'home'});
+  if(['other','cart'].indexOf(PAGE)>-1)DL.push({'event':'page_view_remarketing','google_business_vertical':C.vertical,'dynx_pagetype':'other','ecomm_pagetype':'other'});
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // INTERACTION EVENTS - user_data refreshed at interaction time
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── ADD TO CART ───────────────────────────────────────────────────
+  document.addEventListener('click',function(ev){
+    var btn=ev.target.closest('.add_to_cart_button,.single_add_to_cart_button,[data-add-to-cart],form.cart button[type="submit"]');
+    if(!btn)return;
+    var p=items[0]||{};
+    DL.push({ecommerce:null});
+    DL.push({'event':'add_to_cart','event_id':'atc_'+Date.now(),'ecommerce':{currency:p.currency||C.currency,value:p.price||0,items:[p]},'user_data':getUserData(),'content_ids':[p.item_id||''],'content_name':p.item_name||'','content_type':'product','contents':[{content_id:p.item_id,content_name:p.item_name,price:p.price,quantity:1}],'product_id':p.item_id||'','value':p.price||0,'currency':p.currency||C.currency});
+    DL.push({'event':'add_to_cart_remarketing','google_business_vertical':C.vertical,'dynx_itemid':[p.item_id||''],'dynx_pagetype':'conversionintent','dynx_totalvalue':p.price||0,'ecomm_prodid':[p.item_id||''],'ecomm_pagetype':'cart','ecomm_totalvalue':p.price||0});
+  });
+
+  // ─── FORM SUBMIT (Lead) - CAPTURE & SAVE USER DATA ─────────────────
+  document.addEventListener('submit',function(ev){
+    var f=ev.target;if(!f||f.tagName!=='FORM')return;
+    if(f.classList.contains('cart')||f.classList.contains('checkout')||f.getAttribute('role')==='search')return;
+    // Collect fresh data from THIS form
+    var fd = collectFromDOM();
+    // Also try to get from this specific form's fields
+    var inputs = f.querySelectorAll('input,select,textarea');
+    for(var i=0;i<inputs.length;i++){
+      var inp=inputs[i], nm=(inp.name||'').toLowerCase(), val=inp.value?inp.value.trim():'';
+      if(!val)continue;
+      if(inp.type==='email'||nm.indexOf('email')>-1)fd.email=val;
+      else if(inp.type==='tel'||nm.indexOf('phone')>-1||nm.indexOf('tel')>-1)fd.phone_number=val;
+      else if(nm.indexOf('first')>-1||nm==='your-name'||nm==='name')fd.first_name=val;
+      else if(nm.indexOf('last')>-1||nm.indexOf('surname')>-1)fd.last_name=val;
+      else if(nm.indexOf('city')>-1)fd.city=val;
+      else if(nm.indexOf('country')>-1)fd.country=val;
+      else if(nm.indexOf('zip')>-1||nm.indexOf('postal')>-1)fd.postal_code=val;
     }
+    // If name field has full name, split it
+    if(fd.first_name&&!fd.last_name&&fd.first_name.indexOf(' ')>-1){
+      var parts=fd.first_name.split(' ');
+      fd.first_name=parts[0];
+      fd.last_name=parts.slice(1).join(' ');
+    }
+    // SAVE to cookie for future pages
+    saveUser(fd);
+    // Push with fresh user_data
+    DL.push({'event':'generate_lead','event_id':'lead_'+Date.now(),'user_data':getUserData(),'form_id':f.id||f.getAttribute('data-form-id')||''});
+  });
+
+  // CF7 specific
+  document.addEventListener('wpcf7mailsent',function(ev){
+    var fd=collectFromDOM();
+    if(ev.detail&&ev.detail.inputs){
+      ev.detail.inputs.forEach(function(inp){
+        var nm=inp.name.toLowerCase(),val=inp.value;
+        if(nm.indexOf('email')>-1)fd.email=val;
+        else if(nm.indexOf('phone')>-1||nm.indexOf('tel')>-1)fd.phone_number=val;
+        else if(nm.indexOf('name')>-1&&nm.indexOf('last')===-1)fd.first_name=val;
+        else if(nm.indexOf('last')>-1)fd.last_name=val;
+      });
+    }
+    saveUser(fd);
+    DL.push({'event':'generate_lead','event_id':'lead_cf7_'+Date.now(),'user_data':getUserData(),'form_plugin':'contact_form_7'});
+  });
+
+  // ─── CHECKOUT FIELD CAPTURE (save as user types) ───────────────────
+  if(PAGE==='checkout'){
+    var checkoutFields='#billing_email,#billing_phone,#billing_first_name,#billing_last_name,#billing_city,#billing_postcode';
+    document.querySelectorAll(checkoutFields).forEach(function(inp){
+      inp.addEventListener('blur',function(){
+        var fd=collectFromDOM();
+        saveUser(fd);
+      });
+    });
   }
 
-  // ===================== BOOT =====================
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initUniversalDataLayer);
-  } else {
-    initUniversalDataLayer();
-  }
+  // ─── CLICK TO CALL ────────────────────────────────────────────────
+  document.addEventListener('click',function(ev){
+    var a=ev.target.closest('a[href^="tel:"]');if(!a)return;
+    DL.push({'event':'click_to_call','phone_number':a.href.replace('tel:',''),'user_data':getUserData()});
+  });
 
+  // ─── EMAIL CLICK ──────────────────────────────────────────────────
+  document.addEventListener('click',function(ev){
+    var a=ev.target.closest('a[href^="mailto:"]');if(!a)return;
+    DL.push({'event':'email_click','email_target':a.href.replace('mailto:','').split('?')[0],'user_data':getUserData()});
+  });
+
+  // ─── CHAT (WhatsApp/Messenger) ────────────────────────────────────
+  document.addEventListener('click',function(ev){
+    var a=ev.target.closest('a[href*="wa.me"],a[href*="whatsapp"],a[href*="m.me"]');if(!a)return;
+    DL.push({'event':'chat_click','chat_type':a.href.indexOf('wa.me')>-1||a.href.indexOf('whatsapp')>-1?'whatsapp':'messenger','user_data':getUserData()});
+  });
+
+  // ─── GET DIRECTIONS ───────────────────────────────────────────────
+  document.addEventListener('click',function(ev){
+    var a=ev.target.closest('a[href*="maps.google"],a[href*="google.com/maps"],a[href*="waze.com"]');if(!a)return;
+    DL.push({'event':'get_directions','user_data':getUserData()});
+  });
+
+  // ─── SCROLL DEPTH ─────────────────────────────────────────────────
+  var sf={};window.addEventListener('scroll',function(){var h=document.body.scrollHeight-window.innerHeight;if(h<=0)return;var pct=Math.round(window.scrollY/h*100);[25,50,75,90].forEach(function(t){if(pct>=t&&!sf[t]){sf[t]=1;DL.push({'event':'scroll_depth','scroll_percentage':t,'page_type':PAGE});}});});
+
+  // ─── CUSTOMER STATUS ──────────────────────────────────────────────
+  DL.push({'event':'customer_status','customer_type':document.cookie.match(/_pts_purchased/)?'returning':'new'});
+
+  console.log('[DataLayer] v3 | Page:', PAGE, '| User stored:', Object.keys(getStored()).filter(function(k){return getStored()[k];}).length, 'fields');
 })();
 </script>
