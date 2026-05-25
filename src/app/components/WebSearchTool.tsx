@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Globe, Clock, ExternalLink, Loader2, TrendingUp, Newspaper, Building2, Package, X, Filter } from 'lucide-react';
+import { Search, Globe, Clock, ExternalLink, Loader2, TrendingUp, Newspaper, Building2, Package, X, Filter, AlertCircle, Key, Settings } from 'lucide-react';
 
 interface SearchResult {
   id: string;
@@ -22,14 +22,135 @@ const CATEGORY_CONFIG: Record<CategoryFilter, { label: string; icon: React.React
   general: { label: 'General', icon: <TrendingUp className="w-4 h-4" />, color: 'bg-orange-50 text-orange-700 border-orange-200' },
 };
 
-// Simulated search API - In production, replace with real API (Google Custom Search, Bing, SerpAPI, etc.)
-async function performSearch(query: string): Promise<SearchResult[]> {
-  // Simulate API delay
-  await new Promise(resolve => setTimeout(resolve, 1500));
+// ====== REAL SEARCH API INTEGRATION ======
+// Uses Google Custom Search JSON API (free tier: 100 queries/day)
+// Setup: https://programmablesearchengine.google.com/ + https://console.cloud.google.com/apis
+// OR uses SerpAPI for more robust results
 
-  // Generate realistic mock results based on query
-  const categories: SearchResult['category'][] = ['news', 'website', 'business', 'product', 'general'];
-  const results: SearchResult[] = [];
+interface ApiConfig {
+  provider: 'google' | 'serpapi';
+  apiKey: string;
+  searchEngineId?: string; // Only needed for Google CSE
+}
+
+// Detect category from URL/title
+function detectCategory(url: string, title: string): SearchResult['category'] {
+  const lowerUrl = url.toLowerCase();
+  const lowerTitle = title.toLowerCase();
+
+  // News sources
+  const newsDomains = ['news', 'bbc', 'cnn', 'reuters', 'bloomberg', 'cnbc', 'theguardian', 'nytimes', 'washingtonpost', 'aljazeera', 'ndtv', 'times'];
+  if (newsDomains.some(d => lowerUrl.includes(d)) || lowerTitle.includes('news') || lowerTitle.includes('update') || lowerTitle.includes('report')) {
+    return 'news';
+  }
+
+  // Business
+  const businessDomains = ['linkedin', 'forbes', 'business', 'entrepreneur', 'inc.com', 'crunchbase', 'glassdoor'];
+  if (businessDomains.some(d => lowerUrl.includes(d)) || lowerTitle.includes('business') || lowerTitle.includes('company') || lowerTitle.includes('enterprise')) {
+    return 'business';
+  }
+
+  // Products
+  const productDomains = ['amazon', 'flipkart', 'ebay', 'producthunt', 'techradar', 'tomsguide', 'cnet', 'review'];
+  if (productDomains.some(d => lowerUrl.includes(d)) || lowerTitle.includes('review') || lowerTitle.includes('product') || lowerTitle.includes('buy') || lowerTitle.includes('price')) {
+    return 'product';
+  }
+
+  // Websites/Platforms
+  const websiteDomains = ['github', 'stackoverflow', 'medium', 'dev.to', 'reddit', 'quora', 'wikipedia'];
+  if (websiteDomains.some(d => lowerUrl.includes(d))) {
+    return 'website';
+  }
+
+  return 'general';
+}
+
+// Extract domain from URL
+function extractDomain(url: string): string {
+  try {
+    const domain = new URL(url).hostname.replace('www.', '');
+    return domain;
+  } catch {
+    return url;
+  }
+}
+
+// Google Custom Search API
+async function searchWithGoogle(query: string, config: ApiConfig): Promise<SearchResult[]> {
+  const url = `https://www.googleapis.com/customsearch/v1?key=${config.apiKey}&cx=${config.searchEngineId}&q=${encodeURIComponent(query)}&num=10&dateRestrict=m1`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Google API error: ${response.status} - ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.items || data.items.length === 0) {
+    return [];
+  }
+
+  return data.items.map((item: any, index: number) => ({
+    id: `google-${index}-${Date.now()}`,
+    title: item.title || 'No title',
+    url: item.link || '',
+    snippet: item.snippet || '',
+    source: extractDomain(item.link || ''),
+    publishedDate: item.pagemap?.metatags?.[0]?.['article:published_time']
+      ? new Date(item.pagemap.metatags[0]['article:published_time']).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'Recent',
+    category: detectCategory(item.link || '', item.title || ''),
+  }));
+}
+
+// SerpAPI Search
+async function searchWithSerpApi(query: string, config: ApiConfig): Promise<SearchResult[]> {
+  const url = `https://serpapi.com/search.json?engine=google&q=${encodeURIComponent(query)}&api_key=${config.apiKey}&num=10&tbs=qdr:m`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`SerpAPI error: ${response.status} - ${response.statusText}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.organic_results || data.organic_results.length === 0) {
+    return [];
+  }
+
+  return data.organic_results.map((item: any, index: number) => ({
+    id: `serp-${index}-${Date.now()}`,
+    title: item.title || 'No title',
+    url: item.link || '',
+    snippet: item.snippet || '',
+    source: extractDomain(item.link || ''),
+    publishedDate: item.date || 'Recent',
+    category: detectCategory(item.link || '', item.title || ''),
+  }));
+}
+
+// Main search function - tries real API first, falls back to demo
+async function performSearch(query: string, config: ApiConfig | null): Promise<{ results: SearchResult[]; isLive: boolean }> {
+  // If API config is available, use real search
+  if (config && config.apiKey) {
+    try {
+      let results: SearchResult[];
+      if (config.provider === 'google' && config.searchEngineId) {
+        results = await searchWithGoogle(query, config);
+      } else if (config.provider === 'serpapi') {
+        results = await searchWithSerpApi(query, config);
+      } else {
+        throw new Error('Invalid config');
+      }
+      return { results, isLive: true };
+    } catch (error) {
+      console.error('Live search failed, using demo mode:', error);
+      // Fall through to demo mode
+    }
+  }
+
+  // Demo mode with simulated results
+  await new Promise(resolve => setTimeout(resolve, 1200));
 
   const mockData = [
     {
@@ -94,26 +215,19 @@ async function performSearch(query: string): Promise<SearchResult[]> {
     },
   ];
 
-  mockData.forEach((item, index) => {
-    results.push({
-      id: `result-${index}-${Date.now()}`,
-      title: item.title,
-      url: `https://${item.source}/${query.toLowerCase().replace(/\s+/g, '-')}`,
-      snippet: item.snippet,
-      source: item.source,
-      publishedDate: getRandomDate(),
-      category: item.category,
-    });
-  });
-
-  return results;
-}
-
-function getRandomDate(): string {
   const now = new Date();
-  const daysAgo = Math.floor(Math.random() * 30);
-  const date = new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const results: SearchResult[] = mockData.map((item, index) => ({
+    id: `demo-${index}-${Date.now()}`,
+    title: item.title,
+    url: `https://${item.source}/${query.toLowerCase().replace(/\s+/g, '-')}`,
+    snippet: item.snippet,
+    source: item.source,
+    publishedDate: new Date(now.getTime() - Math.floor(Math.random() * 30) * 86400000)
+      .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+    category: item.category,
+  }));
+
+  return { results, isLive: false };
 }
 
 function getCategoryBadge(category: SearchResult['category']) {
@@ -133,6 +247,26 @@ export default function WebSearchTool() {
   const [hasSearched, setHasSearched] = useState(false);
   const [activeFilter, setActiveFilter] = useState<CategoryFilter>('all');
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [isLiveMode, setIsLiveMode] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // API Configuration - stored in localStorage
+  const [apiConfig, setApiConfig] = useState<ApiConfig>(() => {
+    try {
+      const saved = localStorage.getItem('webSearchToolConfig');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { provider: 'google', apiKey: '', searchEngineId: '' };
+  });
+
+  const saveConfig = (config: ApiConfig) => {
+    setApiConfig(config);
+    try {
+      localStorage.setItem('webSearchToolConfig', JSON.stringify(config));
+    } catch {}
+    setShowSettings(false);
+  };
 
   const handleSearch = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -141,17 +275,21 @@ export default function WebSearchTool() {
     setIsLoading(true);
     setHasSearched(true);
     setActiveFilter('all');
+    setError(null);
 
     try {
-      const searchResults = await performSearch(query.trim());
+      const config = apiConfig.apiKey ? apiConfig : null;
+      const { results: searchResults, isLive } = await performSearch(query.trim(), config);
       setResults(searchResults);
+      setIsLiveMode(isLive);
       // Add to history
       setSearchHistory(prev => {
         const updated = [query.trim(), ...prev.filter(h => h !== query.trim())].slice(0, 5);
         return updated;
       });
-    } catch (error) {
-      console.error('Search failed:', error);
+    } catch (err: any) {
+      console.error('Search failed:', err);
+      setError(err.message || 'Search failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -159,16 +297,21 @@ export default function WebSearchTool() {
 
   const handleQuickSearch = (term: string) => {
     setQuery(term);
+    setError(null);
     setTimeout(() => {
       setIsLoading(true);
       setHasSearched(true);
       setActiveFilter('all');
-      performSearch(term).then(searchResults => {
+      const config = apiConfig.apiKey ? apiConfig : null;
+      performSearch(term, config).then(({ results: searchResults, isLive }) => {
         setResults(searchResults);
+        setIsLiveMode(isLive);
         setSearchHistory(prev => {
           const updated = [term, ...prev.filter(h => h !== term)].slice(0, 5);
           return updated;
         });
+      }).catch(err => {
+        setError(err.message || 'Search failed');
       }).finally(() => setIsLoading(false));
     }, 0);
   };
@@ -182,10 +325,90 @@ export default function WebSearchTool() {
     setResults([]);
     setHasSearched(false);
     setActiveFilter('all');
+    setError(null);
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 sm:p-8">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Key className="w-5 h-5 text-blue-600" />
+                API Configuration
+              </h3>
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                <p className="font-medium mb-1">How to get API keys:</p>
+                <ul className="list-disc list-inside space-y-1 text-blue-700">
+                  <li><strong>Google:</strong> Go to <a href="https://console.cloud.google.com/apis" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Console</a> → Enable "Custom Search API" → Create API Key</li>
+                  <li><strong>Google CSE ID:</strong> Go to <a href="https://programmablesearchengine.google.com/" target="_blank" rel="noopener noreferrer" className="underline">Programmable Search Engine</a> → Create → Get Search Engine ID</li>
+                  <li><strong>SerpAPI:</strong> Sign up at <a href="https://serpapi.com/" target="_blank" rel="noopener noreferrer" className="underline">serpapi.com</a> → Get API key (100 free searches/month)</li>
+                </ul>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Search Provider</label>
+                <select
+                  value={apiConfig.provider}
+                  onChange={(e) => setApiConfig({ ...apiConfig, provider: e.target.value as 'google' | 'serpapi' })}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                >
+                  <option value="google">Google Custom Search (100 free/day)</option>
+                  <option value="serpapi">SerpAPI (100 free/month)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">API Key *</label>
+                <input
+                  type="password"
+                  value={apiConfig.apiKey}
+                  onChange={(e) => setApiConfig({ ...apiConfig, apiKey: e.target.value })}
+                  placeholder="Enter your API key"
+                  className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                />
+              </div>
+
+              {apiConfig.provider === 'google' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Search Engine ID (cx) *</label>
+                  <input
+                    type="text"
+                    value={apiConfig.searchEngineId || ''}
+                    onChange={(e) => setApiConfig({ ...apiConfig, searchEngineId: e.target.value })}
+                    placeholder="e.g., a1b2c3d4e5f6g7h8i"
+                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                  />
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => saveConfig(apiConfig)}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-4 py-2.5 rounded-lg font-medium hover:from-blue-700 hover:to-indigo-700 transition-all"
+                >
+                  Save & Connect
+                </button>
+                <button
+                  onClick={() => saveConfig({ provider: 'google', apiKey: '', searchEngineId: '' })}
+                  className="px-4 py-2.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium transition-colors"
+                >
+                  Use Demo Mode
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
@@ -196,18 +419,36 @@ export default function WebSearchTool() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">Web Search Tool</h1>
-                <p className="text-xs text-gray-500">Search the internet for latest info</p>
+                <p className="text-xs text-gray-500">
+                  {apiConfig.apiKey ? (
+                    <span className="text-green-600 font-medium flex items-center gap-1">
+                      <span className="w-2 h-2 bg-green-500 rounded-full inline-block animate-pulse"></span>
+                      Live Mode ({apiConfig.provider === 'google' ? 'Google' : 'SerpAPI'})
+                    </span>
+                  ) : (
+                    <span className="text-orange-600">Demo Mode - Add API key for live results</span>
+                  )}
+                </p>
               </div>
             </div>
-            {hasSearched && (
+            <div className="flex items-center gap-2">
+              {hasSearched && (
+                <button
+                  onClick={clearSearch}
+                  className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                  Clear
+                </button>
+              )}
               <button
-                onClick={clearSearch}
-                className="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                onClick={() => setShowSettings(true)}
+                className="text-sm text-gray-500 hover:text-blue-600 flex items-center gap-1 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors border border-gray-200"
               >
-                <X className="w-4 h-4" />
-                Clear
+                <Settings className="w-4 h-4" />
+                API Settings
               </button>
-            )}
+            </div>
           </div>
         </div>
       </header>
@@ -332,14 +573,31 @@ export default function WebSearchTool() {
           </div>
         )}
 
+        {/* Error State */}
+        {error && !isLoading && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-red-800 font-medium">Search Error</p>
+              <p className="text-red-600 text-sm">{error}</p>
+              <p className="text-red-500 text-xs mt-1">Tip: Check your API key in Settings, or use Demo Mode</p>
+            </div>
+          </div>
+        )}
+
         {/* Results */}
-        {!isLoading && hasSearched && (
+        {!isLoading && hasSearched && !error && (
           <>
             {filteredResults.length > 0 ? (
               <div className="space-y-4">
-                <p className="text-sm text-gray-500 mb-4">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm text-gray-500">
                   Showing {filteredResults.length} result{filteredResults.length !== 1 ? 's' : ''} for "<span className="font-medium text-gray-700">{query}</span>"
                 </p>
+                <span className={`text-xs px-2 py-1 rounded-full font-medium ${isLiveMode ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                  {isLiveMode ? '🌐 Live Results' : '🎭 Demo Results'}
+                </span>
+              </div>
                 {filteredResults.map(result => (
                   <div
                     key={result.id}
@@ -413,7 +671,7 @@ export default function WebSearchTool() {
       <footer className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-center">
         <p className="text-xs text-gray-400">
           Web Search Tool - Collects latest information from across the internet.
-          Connect with a real search API (Google, Bing, SerpAPI) for live results.
+          {!apiConfig.apiKey && ' Click "API Settings" to connect Google Custom Search or SerpAPI for real-time live results.'}
         </p>
       </footer>
     </div>
