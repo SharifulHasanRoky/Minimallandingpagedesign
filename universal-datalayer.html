@@ -437,8 +437,8 @@
       if (!product && window.wc_single_product_params) {
         var priceEl = document.querySelector('.price .woocommerce-Price-amount');
         product = {
-          item_id: document.querySelector('.product')?.getAttribute('data-product_id') || '',
-          item_name: document.querySelector('.product_title')?.textContent || document.title,
+          item_id: (document.querySelector('.product') ? document.querySelector('.product').getAttribute('data-product_id') : '') || '',
+          item_name: (document.querySelector('.product_title') ? document.querySelector('.product_title').textContent : '') || document.title,
           price: priceEl ? parseFloat(priceEl.textContent.replace(/[^0-9.]/g, '')) : 0,
           currency: window.woocommerce_params ? window.woocommerce_params.currency : 'USD'
         };
@@ -525,7 +525,7 @@
 
       var self = this;
       var formId = form.id || form.name || form.getAttribute('data-form-id') || 'form_' + Math.random().toString(36).substr(2, 6);
-      var formName = form.getAttribute('data-form-name') || form.getAttribute('aria-label') || form.querySelector('h1,h2,h3,legend')?.textContent?.trim() || formId;
+      var formName = form.getAttribute('data-form-name') || form.getAttribute('aria-label') || (form.querySelector('h1,h2,h3,legend') ? form.querySelector('h1,h2,h3,legend').textContent.trim() : '') || formId;
 
       // Form Start (first interaction)
       var started = false;
