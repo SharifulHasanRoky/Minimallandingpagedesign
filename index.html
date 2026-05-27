@@ -516,6 +516,7 @@
                 <span>⬇️</span> <span id="downloadBtnText">Download MP4 - 720p</span>
             </button>
             <p class="success-msg" id="successMsg">✅ New tab opened with download! If blocked, allow pop-ups for this site.</p>
+            <div id="backupLinks" style="display: none;"></div>
         </div>
 
         <div class="features" id="featuresSection">
@@ -680,10 +681,19 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner"></span> Preparing Download...';
 
-            const downloadUrl = selectedFormat.type === 'audio' 
-                ? `https://www.y2mate.com/youtube-mp3/${currentVideoId}`
-                : `https://www.y2mate.com/youtube/${currentVideoId}`;
+            const videoUrl = `https://www.youtube.com/watch?v=${currentVideoId}`;
             
+            // Multiple working download services - tries the best ones
+            let downloadUrl;
+            if (selectedFormat.type === 'audio') {
+                // MP3 download services
+                downloadUrl = `https://cnvmp3.com/mp3/${currentVideoId}`;
+            } else {
+                // MP4 download services based on quality
+                downloadUrl = `https://10downloader.com/download?v=${encodeURIComponent(videoUrl)}`;
+            }
+
+            // Open primary service
             window.open(downloadUrl, '_blank');
 
             setTimeout(() => {
@@ -691,6 +701,20 @@
                 const type = selectedFormat.type === 'audio' ? 'MP3' : 'MP4';
                 btn.innerHTML = `<span>⬇️</span> <span id="downloadBtnText">Download ${type} - ${selectedFormat.quality}</span>`;
                 document.getElementById('successMsg').classList.add('show');
+                
+                // Show backup links
+                document.getElementById('backupLinks').style.display = 'block';
+                document.getElementById('backupLinks').innerHTML = `
+                    <p style="color: #999; font-size: 13px; margin-top: 16px; text-align: center;">
+                        Download shuru na hole nicher link try koro:
+                    </p>
+                    <div style="display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap;">
+                        <a href="https://ssyoutube.online/en2/?url=${encodeURIComponent(videoUrl)}" target="_blank" style="padding: 8px 16px; background: rgba(231,76,60,0.2); border: 1px solid rgba(231,76,60,0.3); border-radius: 8px; color: #e74c3c; text-decoration: none; font-size: 13px;">SSYoutube</a>
+                        <a href="https://10downloader.com/download?v=${encodeURIComponent(videoUrl)}" target="_blank" style="padding: 8px 16px; background: rgba(155,89,182,0.2); border: 1px solid rgba(155,89,182,0.3); border-radius: 8px; color: #9b59b6; text-decoration: none; font-size: 13px;">10Downloader</a>
+                        <a href="https://yt1s.com/youtube-to-mp4?q=${encodeURIComponent(videoUrl)}" target="_blank" style="padding: 8px 16px; background: rgba(52,152,219,0.2); border: 1px solid rgba(52,152,219,0.3); border-radius: 8px; color: #3498db; text-decoration: none; font-size: 13px;">YT1s</a>
+                        <a href="https://en.savefrom.net/1-youtube-video-downloader-44/#url=${encodeURIComponent(videoUrl)}" target="_blank" style="padding: 8px 16px; background: rgba(46,204,113,0.2); border: 1px solid rgba(46,204,113,0.3); border-radius: 8px; color: #2ecc71; text-decoration: none; font-size: 13px;">SaveFrom</a>
+                    </div>
+                `;
             }, 1500);
         }
 
